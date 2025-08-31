@@ -1,0 +1,26 @@
+{
+  "sites": [
+    {
+      "name": "Cheyenne-DC1",
+      "lat": 41.139981,
+      "lon": -104.820246,
+      "thresholds": {
+        "max_temp_c": 30.0,
+        "max_wind_mps": 12.0,
+        "min_relative_humidity_pct": 15
+      }
+    },
+    {
+      "name": "Montgomery-Edge",
+      "lat": 32.379223,
+      "lon": -86.307737,
+      "thresholds": {
+        "max_temp_c": 31.0,
+        "max_wind_mps": 10.0,
+        "min_relative_humidity_pct": 20
+      }
+    }
+  ],
+  "horizon_hours": 7,
+  "timezone": "auto"
+}
