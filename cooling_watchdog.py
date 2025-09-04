@@ -43,7 +43,7 @@ def load_site_data(file_path):
         with open(file_path, "r") as f:
             cfg = json.load(f)
 
-        horizon_hours = int(cfg.get("horizon_hours", 7))
+        horizon_hours = int(cfg.get("horizon_hours", 72))
         default_tz = cfg.get("timezone", "auto")
 
         rows, index = [], {}
