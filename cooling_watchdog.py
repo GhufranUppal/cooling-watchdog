@@ -288,7 +288,8 @@ def print_risk_preview(df: pd.DataFrame):
 
 def main():
     print("\n=== Cooling Watch – Starting Analysis ===")
-    combined = analyze_risk_windows(config_path="Sites.json", save_excel=True)
+    DEFAULT_CONFIG_PATH = os.path.join(os.getcwd(), "Sites.json")
+    combined = analyze_risk_windows(config_path=DEFAULT_CONFIG_PATH, save_excel=True)
     print_risk_preview(combined)
     return 0
 
