@@ -21,6 +21,6 @@
       }
     }
   ],
-  "horizon_hours": 7,
+  "horizon_hours": 72,
   "timezone": "auto"
 }
