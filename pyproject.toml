@@ -1,0 +1,15 @@
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cooling-watchdog"
+version = "0.1.0"
+description = "A proactive weather risk analysis system for monitoring temperature, humidity, and wind conditions"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "pandas",
+    "requests",
+    "openpyxl"
+]

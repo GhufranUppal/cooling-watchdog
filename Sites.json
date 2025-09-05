@@ -1,26 +1,31 @@
 {
+  "horizon_hours": 72,
+  "timezone": "auto",
   "sites": [
-    {
-      "name": "Cheyenne-DC1",
-      "lat": 41.139981,
-      "lon": -104.820246,
-      "thresholds": {
-        "max_temp_c": 30.0,
-        "max_wind_mps": 12.0,
-        "min_relative_humidity_pct": 15
-      }
-    },
     {
       "name": "Montgomery-Edge",
       "lat": 32.379223,
       "lon": -86.307737,
       "thresholds": {
-        "max_temp_c": 31.0,
-        "max_wind_mps": 10.0,
+        "units": "US",
+        "max_temp": 88.0,
+        "max_wind": 22.0,
         "min_relative_humidity_pct": 20
-      }
+      },
+      "timezone": "America/Chicago"
+    },
+    {
+      "name": "Virginia-East",
+      "lat": 37.431573,
+      "lon": -78.656894,
+      "thresholds": {
+        "units": "US",
+        "max_temp": 85.0,
+        "max_wind": 20.0,
+        "min_relative_humidity_pct": 25
+      },
+      "timezone": "America/New_York"
     }
-  ],
-  "horizon_hours": 72,
-  "timezone": "auto"
+  ]
 }
+
