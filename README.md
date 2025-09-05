@@ -64,6 +64,11 @@ Cooling Watchdog is a Python-based service that:
 
 ---
 
+## System Architecture
+
+![Cooling Watchdog Architecture](CoolingWatchdog_Architecture.png)
+
+
 ## 📂 Project Structure  
 
 
