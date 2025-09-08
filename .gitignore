@@ -14,10 +14,7 @@ env/
 *.db
 *.sqlite3
 
-# Logs & reports
-*.log
-reports/
-logs/
+
 
 # Jupyter notebooks checkpoints
 .ipynb_checkpoints/
