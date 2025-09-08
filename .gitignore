@@ -27,8 +27,3 @@ logs/
 .idea/
 .DS_Store
 Thumbs.db
-
-# Generated diagrams & exports
-*.png
-*.pptx
-*.pdf

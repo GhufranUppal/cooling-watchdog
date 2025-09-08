@@ -5,8 +5,8 @@ import requests
 from zoneinfo import ZoneInfo
 from typing import Tuple, Dict, Optional
 
-from .url_builder import build_open_meteo_url
-from .config import load_site_data
+from cooling_watchdog.url_builder import build_open_meteo_url
+from cooling_watchdog.config import load_site_data, ConfigError
 
 def get_weather_forecast(
     lat: float,
@@ -30,9 +30,14 @@ def get_weather_forecast(
             thresholds: dict
             effective_tz_string: str
     """
-    sites_df, horizon_hours, default_tz, site_index = load_site_data(config_path)
+    sites_df, horizon_hours, default_tz, site_index, err = load_site_data(config_path)
+    
+    if err != ConfigError.SUCCESS:
+        print(f"ERROR: Could not load config (err={err}) or site not found for {site_name}")
+        return None, None, None, None
+
     if sites_df is None or site_name not in site_index:
-        print(f"ERROR: Could not load config or site not found for {site_name}")
+        print(f"ERROR: Site not found: {site_name}")
         return None, None, None, None
 
     srow = site_index[site_name]
@@ -56,23 +61,19 @@ def get_weather_forecast(
 
     try:
         times = data["hourly"]["time"]
-        temps = data["hourly"]["temperature_2m"]
+        temps_f = data["hourly"]["temperature_2m"]  # Already in °F
         rhs = data["hourly"]["relative_humidity_2m"]
-        winds = data["hourly"]["wind_speed_10m"]
+        winds_mph = data["hourly"]["wind_speed_10m"]  # Already in mph
     except KeyError as e:
         print(f"ERROR: Missing key in API response for {site_name}: {e}")
         return None, None, None, None
-
-    # Convert API response from SI to US units
-    temps_f = [t * 9.0/5.0 + 32.0 for t in temps]  # Convert °C to °F
-    winds_mph = [w * 2.2369362921 for w in winds]  # Convert m/s to mph
     
     df = pd.DataFrame(
         {
             "Time": pd.to_datetime(times),
-            "Temperature (°F)": temps_f,
+            "Temperature (°F)": temps_f,  # Direct from API in °F
             "Humidity (%)": rhs,
-            "Wind Speed (mph)": winds_mph,
+            "Wind Speed (mph)": winds_mph,  # Direct from API in mph
         }
     )
 

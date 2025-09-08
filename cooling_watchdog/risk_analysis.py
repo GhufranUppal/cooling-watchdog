@@ -5,8 +5,14 @@ from datetime import datetime
 import pandas as pd
 from typing import Dict
 
-from .config import load_site_data
-from .weather import get_weather_forecast
+try:
+    # Try package-style import first
+    from cooling_watchdog.config import load_site_data, ConfigError
+    from cooling_watchdog.weather import get_weather_forecast
+except ImportError:
+    # Fall back to local imports if running directly
+    from config import load_site_data, ConfigError
+    from weather import get_weather_forecast
 
 def attach_risk_flags(forecast_df: pd.DataFrame, site_name: str, thresholds: dict) -> pd.DataFrame:
     """
@@ -45,7 +51,7 @@ def attach_risk_flags(forecast_df: pd.DataFrame, site_name: str, thresholds: dic
     )
     return out
 
-def analyze_risk_windows(config_path: str, save_excel: bool = True) -> pd.DataFrame:
+def analyze_risk_windows(config_path: str, save_excel: bool = True) -> tuple[pd.DataFrame, int]:
     """
     For each site in the configuration: fetch, slice to horizon, flag risks, and optionally save Excel.
 
@@ -54,13 +60,20 @@ def analyze_risk_windows(config_path: str, save_excel: bool = True) -> pd.DataFr
         save_excel (bool): Whether to save results to Excel
 
     Returns:
-        pd.DataFrame: Combined per-hour DataFrame for all sites
+        tuple containing:
+            - pd.DataFrame: Combined per-hour DataFrame for all sites
+            - int: Error code (0 for success, non-zero for errors)
     """
     print("\nReading configuration...")
-    sites_df, horizon_hours, default_tz, _index = load_site_data(config_path)
-    if sites_df is None or sites_df.empty:
+    sites_df, horizon_hours, default_tz, _index, error_code = load_site_data(config_path)
+    
+    if error_code != ConfigError.SUCCESS:
+        # Configuration error occurred, return empty DataFrame and the error code
+        return pd.DataFrame(), error_code
+    
+    if sites_df is None:
         print("No sites found; aborting.")
-        return pd.DataFrame()
+        return pd.DataFrame(), ConfigError.EMPTY_SITES
 
     all_rows = []
     for _, row in sites_df.iterrows():
@@ -76,16 +89,26 @@ def analyze_risk_windows(config_path: str, save_excel: bool = True) -> pd.DataFr
             continue
 
         flagged = attach_risk_flags(df_slice, site_name, thresholds)
+        flagged['Time Zone'] = flagged['Time'].dt.tz
         all_rows.append(flagged)
 
     if not all_rows:
         print("No data produced for any site.")
         return pd.DataFrame()
+    for df in all_rows:
+        print('DataFrame  Time columns:', df['Time'].dt.tz)
 
     combined = pd.concat(all_rows, ignore_index=True)
+    print('combined columns:', combined.columns)
+    print(combined.head())
+    print('Number of Time zones:', combined['Time Zone'].nunique())
+
+
 
     # Summarize contiguous risk windows per site
     risk_only = combined[combined["any_risk"]].copy()
+
+    print('risk_only', risk_only.head())
     if risk_only.empty:
         summary = pd.DataFrame()
         print("\nNo risk windows found.")
@@ -108,16 +131,104 @@ def analyze_risk_windows(config_path: str, save_excel: bool = True) -> pd.DataFr
         )
 
     # Optional: Excel outputs
-    if save_excel:
-        os.makedirs("reports", exist_ok=True)
-        xlsx_path = os.path.join("reports", f"Cooling_Watchdog_Risk_Report_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx")
-        with pd.ExcelWriter(xlsx_path, engine="openpyxl") as writer:
-            combined.to_excel(writer, index=False, sheet_name="Detailed Risks")
-            if not summary.empty:
-                summary.to_excel(writer, index=False, sheet_name="Risk Summary")
+
+    if save_excel and not combined.empty:
+        # Prepare detailed risks data with formatted dates
+        detailed_risks = combined.copy()
+        print ('size of detailed_risks:', detailed_risks.shape)
+        print ('columns for detailed risks:')
+        print( detailed_risks.columns)
+        print('Number of Time zones:', detailed_risks['Time Zone'].nunique())
+        print(detailed_risks['Time Zone'].unique())
+        #df['time'] = pd.to_datetime(df['time'], errors='coerce')
+        detailed_risks['Time'] = pd.to_datetime(detailed_risks['Time'], errors='coerce')
+        detailed_risks['Date'] = detailed_risks['Time'].dt.strftime('%Y-%m-%d')
+        detailed_risks['Time of Day'] = detailed_risks['Time'].dt.strftime('%I:%M %p')
+
+        detailed_risks['Local Timezone'] = detailed_risks['Time'].dt.tz
+        #print ('Number of Time zones:', detailed_risks['Local Timezone'].nunique())
+        
+        # Select and rename columns for detailed risks sheet
+        detailed_cols = {
+            'Date': 'Date',
+            'Time of Day': 'Time',
+            'Local Timezone': 'Timezone',
+            'site_name': 'Site',
+            'Temperature (°F)': 'Temperature (°F)',
+            'Humidity (%)': 'Humidity (%)',
+            'Wind Speed (mph)': 'Wind Speed (mph)',
+            'temperature_risk': 'Temperature Risk',
+            'wind_risk': 'Wind Risk',
+            'humidity_risk': 'Humidity Risk',
+            'any_risk': 'Any Risk Condition',
+            'risk_triggers': 'Risk Triggers'
+        }
+        detailed_excel = detailed_risks[list(detailed_cols.keys())].rename(columns=detailed_cols)
+
+        # Prepare risk summary data with formatted dates
+        summary_excel = None
+        if not summary.empty:
+            summary_excel = summary.copy()
+            summary_excel['Start Date'] = summary_excel['start_time'].dt.strftime('%Y-%m-%d')
+            summary_excel['Start Time'] = summary_excel['start_time'].dt.strftime('%I:%M %p')
+            summary_excel['End Date'] = summary_excel['end_time'].dt.strftime('%Y-%m-%d')
+            summary_excel['End Time'] = summary_excel['end_time'].dt.strftime('%I:%M %p')
+            summary_excel['Timezone'] = summary_excel['start_time'].dt.tz
+
+
+            # Select and rename columns for summary sheet
+            summary_cols = {
+                'site_name': 'Site',
+                'Start Date': 'Start Date',
+                'Start Time': 'Start Time',
+                'End Date': 'End Date',
+                'End Time': 'End Time',
+                'Timezone': 'Timezone',
+                'duration_h': 'Duration (hours)',
+                'peak_temp_f': 'Peak Temperature (°F)',
+                'peak_wind_mph': 'Peak Wind Speed (mph)',
+                'min_rh_pct': 'Minimum Humidity (%)',
+                'triggers': 'Risk Triggers'
+            }
+            summary_excel = summary_excel[list(summary_cols.keys())].rename(columns=summary_cols)
+
+        # Create reports directory and save Excel file
+        reports_dir = os.path.join(os.getcwd(), "reports")
+        os.makedirs(reports_dir, exist_ok=True)
+        xlsx_path = os.path.join(reports_dir, f"Cooling_Watchdog_Risk_Report_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx")
+        
+        try:
+            with pd.ExcelWriter(xlsx_path, engine="openpyxl") as writer:
+                # Write detailed risks sheet
+                detailed_excel.to_excel(writer, index=False, sheet_name="Detailed Risks")
+                
+                # Write summary sheet if available
+                if summary_excel is not None:
+                    summary_excel.to_excel(writer, index=False, sheet_name="Risk Summary")
+                    
+                # Auto-adjust column widths in both sheets
+                for sheet_name in writer.sheets:
+                    worksheet = writer.sheets[sheet_name]
+                    for idx, col in enumerate(worksheet.columns, 1):
+                        max_length = 0
+                        column = worksheet.column_dimensions[chr(64 + idx)]  # Get column letter
+                        for cell in col:
+                            try:
+                                if len(str(cell.value)) > max_length:
+                                    max_length = len(str(cell.value))
+                            except:
+                                pass
+                        adjusted_width = (max_length + 2)
+                        column.width = min(adjusted_width, 50)  # Cap width at 50
+                        
+            print(f"\nAnalysis complete. Excel saved:\n{xlsx_path}")
+            return combined, ConfigError.SUCCESS
+        except Exception as e:
+            print(f"\nError saving Excel file: {str(e)}")
+            return combined, ConfigError.GENERAL_ERROR
         print(f"\nAnalysis complete. Excel saved:\n{xlsx_path}")
 
-    return combined
+    return combined, ConfigError.SUCCESS
 
 def print_risk_preview(df: pd.DataFrame):
     """
