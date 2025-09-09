@@ -108,13 +108,15 @@ def analyze_risk_windows(config_path: str, save_excel: bool = True) -> tuple[pd.
     # Summarize contiguous risk windows per site
     risk_only = combined[combined["any_risk"]].copy()
 
-    print('risk_only', risk_only.head())
+    print('risk_only columns:', risk_only.columns)
+    print('Number of Time zones in risk_only:', risk_only['Time Zone'].nunique())
     if risk_only.empty:
         summary = pd.DataFrame()
         print("\nNo risk windows found.")
     else:
         grp = (risk_only["risk_group"] != risk_only["risk_group"].shift()).cumsum()
         risk_only["window_group"] = grp
+        print('The type of Group:', type(grp))
         summary = (
             risk_only.groupby(["site_name", "window_group"], as_index=False)
             .agg(
@@ -130,6 +132,9 @@ def analyze_risk_windows(config_path: str, save_excel: bool = True) -> tuple[pd.
             .reset_index(drop=True)
         )
 
+    print('The type of summary:', type(summary))
+    print('the columns of summary:', summary.columns)
+
     # Optional: Excel outputs
 
     if save_excel and not combined.empty:
@@ -144,15 +149,18 @@ def analyze_risk_windows(config_path: str, save_excel: bool = True) -> tuple[pd.
         detailed_risks['Time'] = pd.to_datetime(detailed_risks['Time'], errors='coerce')
         detailed_risks['Date'] = detailed_risks['Time'].dt.strftime('%Y-%m-%d')
         detailed_risks['Time of Day'] = detailed_risks['Time'].dt.strftime('%I:%M %p')
+        print ('size of detailed_risks:', detailed_risks.shape)
+        print ('columns for detailed risks:')
+        print( detailed_risks.columns)
 
-        detailed_risks['Local Timezone'] = detailed_risks['Time'].dt.tz
+        #detailed_risks['Local Timezone'] = detailed_risks['Time'].dt.tz
         #print ('Number of Time zones:', detailed_risks['Local Timezone'].nunique())
         
         # Select and rename columns for detailed risks sheet
         detailed_cols = {
             'Date': 'Date',
             'Time of Day': 'Time',
-            'Local Timezone': 'Timezone',
+            'Time Zone': 'Time Zone',
             'site_name': 'Site',
             'Temperature (°F)': 'Temperature (°F)',
             'Humidity (%)': 'Humidity (%)',
@@ -164,6 +172,7 @@ def analyze_risk_windows(config_path: str, save_excel: bool = True) -> tuple[pd.
             'risk_triggers': 'Risk Triggers'
         }
         detailed_excel = detailed_risks[list(detailed_cols.keys())].rename(columns=detailed_cols)
+        print('detailed_excel columns:', detailed_excel.columns)
 
         # Prepare risk summary data with formatted dates
         summary_excel = None
@@ -174,6 +183,8 @@ def analyze_risk_windows(config_path: str, save_excel: bool = True) -> tuple[pd.
             summary_excel['End Date'] = summary_excel['end_time'].dt.strftime('%Y-%m-%d')
             summary_excel['End Time'] = summary_excel['end_time'].dt.strftime('%I:%M %p')
             summary_excel['Timezone'] = summary_excel['start_time'].dt.tz
+            print('summary_excel columns:', summary_excel.columns)
+           
 
 
             # Select and rename columns for summary sheet
