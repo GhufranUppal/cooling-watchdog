@@ -57,7 +57,8 @@ Cooling Watchdog is a Python-based service that:
 
 4. **Outputs results in multiple formats**  
    - **SQL tables** (`risk_now`, `risk_windows`) for SCADA dashboards.  
-   - **MQTT messages** for cloud brokers (Azure IoT Hub, EMQX, HiveMQ).  
+   - **MQTT messages** for cloud brokers (Azure IoT Hub, EMQX, HiveMQ). 
+   - **Excel reports** (auto-generated, timestamped) summarizing site risk windows.  
    - **JSON + Markdown reports** for operators.  
 
 ✅ This makes SCADA **proactive** instead of reactive.  
@@ -67,6 +68,15 @@ Cooling Watchdog is a Python-based service that:
 ## System Architecture
 
 ![Cooling Watchdog Architecture](CoolingWatchdog_Architecture.png)
+
+## 📊 Example Excel Report
+
+Cooling Watchdog generates Excel risk reports under the `reports/` folder.  
+Each report includes hourly forecasts, risk flags, and summarized risk windows.
+
+Example report:  
+[Cooling_Watchdog_Risk_Report_20250909_2153.xlsx](reports/Cooling_Watchdog_Risk_Report_20250909_2153.xlsx)
+
 
 
 ## 📂 Project Structure  
