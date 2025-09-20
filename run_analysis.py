@@ -5,7 +5,7 @@ Entry point script for running the Cooling Watchdog analysis directly.
 
 import os
 import sys
-from cooling_watchdog.risk_analysis import analyze_risk_windows, print_risk_preview
+from cooling_watchdog.risk_analysis_2 import analyze_risk_windows, print_risk_preview
 
 def main():
     """Main entry point for running the analysis."""

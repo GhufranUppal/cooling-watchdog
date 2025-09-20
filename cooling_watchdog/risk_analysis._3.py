@@ -1,30 +1,26 @@
-# cooling_watchdog_consolidated.py
+# risk_analysis_consolidated.py
 """
-Cooling Watchdog (consolidated)
-- Loads sites from JSON (load_site_data)
-- Gets weather forecast per site (get_weather_forecast)
-- Flags hourly risks
-- Groups contiguous risky hours into windows, normalizes triggers, computes risk_score (0..3)
-- Writes to PostgreSQL:
-    * risk_windows
-    * risk_now (earliest upcoming window per site)
-    * risk_hourly STRICTLY from summary windows (synthesized hourly stamps, no fallback)
-- Optional Excel export
+Consolidated Cooling Watchdog analysis:
+- Loads sites/config
+- Gets weather forecast per site (uses your existing `weather.get_weather_forecast`)
+- Flags hourly risks, groups windows, computes triggers & risk_score (0..3)
+- Writes to PostgreSQL (safe for NaT -> NULL)
+- Optional Excel report
 """
 
 from __future__ import annotations
 
 import os
 from datetime import datetime
-from typing import Optional, Iterable, Tuple, List
+from typing import Dict, Optional, Tuple, Iterable, Tuple as Tup
 
 import pandas as pd
 import psycopg2
 import psycopg2.extras as extras
 
-
 # ============================================================================
-# 0) PostgreSQL DSN (hard-coded for lab/dev; prefer env vars in prod)
+# 0) CONFIG: PostgreSQL DSN
+#    (Hard-code here for lab/dev; for prod, use env vars or .env)
 # ============================================================================
 DSN = (
     "dbname=ignitiondb "
@@ -34,14 +30,15 @@ DSN = (
     "port=5432"
 )
 
-
 # ============================================================================
-# 1) Config + Weather imports (package-first, local fallback)
+# 1) TRY IMPORTS FOR CONFIG + WEATHER
 # ============================================================================
 try:
-    from cooling_watchdog.config import load_site_data, ConfigError  # type: ignore
-    from cooling_watchdog.weather import get_weather_forecast        # type: ignore
+    # Package-style (if you installed your package or run from package root)
+    from cooling_watchdog.config import load_site_data, ConfigError
+    from cooling_watchdog.weather import get_weather_forecast
 except ImportError:
+    # Local fallback
     from config import load_site_data, ConfigError  # type: ignore
     from weather import get_weather_forecast        # type: ignore
 
@@ -121,7 +118,7 @@ def upsert_risk_now(
         cur.execute(sql, (site, int(risk_score), next_window_start_ts, next_window_starts_in_h))
         conn.commit()
 
-def insert_risk_windows(rows: Iterable[Tuple]):
+def insert_risk_windows(rows: Iterable[Tup]):
     """
     Rows: (site, start_ts, end_ts, duration_h, peak_temp, peak_wind, min_rh_pct, triggers, risk_score)
     """
@@ -138,7 +135,7 @@ def insert_risk_windows(rows: Iterable[Tuple]):
         extras.execute_values(cur, sql, rows, page_size=500)
         conn.commit()
 
-def upsert_risk_hourly(rows: Iterable[Tuple]):
+def upsert_risk_hourly(rows: Iterable[Tup]):
     """
     Rows: (site, ts, temp, wind, rh_pct, temperature_risk, wind_risk, humidity_risk, any_risk)
     """
@@ -230,119 +227,72 @@ def attach_risk_flags(forecast_df: pd.DataFrame, site_name: str, thresholds: dic
     )
     return out
 
-
-# ============================================================================
-# 4) STRICT hourly upsert from summary (no fallback)
-# ============================================================================
-
-def _flags_from_triggers(triggers: str) -> Tuple[bool, bool, bool]:
+def build_site_payload(site: str, summary_for_site: pd.DataFrame) -> dict:
     """
-    Infer hourly boolean flags from a window's normalized triggers string.
-    Expected tokens: 'Temperature', 'Wind', 'Humidity' (case-insensitive ok).
+    Create risk_now payload (earliest upcoming window per site).
     """
-    t = (triggers or "").lower()
-    tr = "temperature" in t
-    wr = "wind" in t
-    hr = "humidity" in t
-    return tr, wr, hr
+    if summary_for_site is None or summary_for_site.empty:
+        return {
+            "site": site,
+            "risk_score": 0,
+            "next_window_start_ts": None,
+            "next_window_starts_in_h": None,
+        }
+    nxt = summary_for_site.sort_values("start_time").iloc[0]
+    score = int(nxt.get("risk_score", 0))
+    tzinfo = nxt["start_time"].tz
+    now_aware = pd.Timestamp.now(tz=tzinfo)
+    starts_in_h = max(0, int((nxt["start_time"] - now_aware).total_seconds() // 3600))
+    return {
+        "site": site,
+        "risk_score": score,
+        "next_window_start_ts": nxt["start_time"],
+        "next_window_starts_in_h": starts_in_h,
+    }
 
-def upsert_risk_hourly_from_summary_strict(summary: pd.DataFrame) -> None:
-    """
-    STRICT writer: only uses the window 'summary' DataFrame to upsert risk_hourly.
-
-    Expects per-row:
-      - site_name (str)
-      - start_time (tz-aware preferred)
-      - end_time
-      - triggers (comma list like 'Temperature, Wind', already normalized)
-
-    Writes one row per hour in each window with:
-      - temp/wind/rh = NULL
-      - temperature_risk / wind_risk / humidity_risk from 'triggers'
-      - any_risk = OR of the three flags
-    """
+def upsert_risk_now_from_summary(summary: pd.DataFrame):
+    """UPSERT one snapshot row per site from the summary windows."""
     if summary is None or summary.empty:
         return
-
-    s = summary.copy()
-    s["start_time"] = pd.to_datetime(s["start_time"], errors="coerce")
-    s["end_time"]   = pd.to_datetime(s["end_time"], errors="coerce")
-    s = s.dropna(subset=["start_time", "end_time"])
-    if s.empty:
-        return
-
-    rows: List[Tuple] = []
-    for _, w in s.iterrows():
-        site = w["site_name"]
-        start = w["start_time"]
-        end   = w["end_time"]
-        trig  = str(w.get("triggers", ""))
-
-        tr, wr, hr = _flags_from_triggers(trig)
-        anyr = tr or wr or hr
-
-        # Inclusive hourly stamps
-        hours = pd.date_range(start=start, end=end, freq="H")
-        if len(hours) == 0:
-            continue
-
-        for ts in hours:
-            ts_py = _ts_or_none(ts)
-            if ts_py is None:
-                continue
-            rows.append((
-                site,        # site
-                ts_py,       # ts (TIMESTAMPTZ)
-                None,        # temp
-                None,        # wind
-                None,        # rh_pct
-                bool(tr),    # temperature_risk
-                bool(wr),    # wind_risk
-                bool(hr),    # humidity_risk
-                bool(anyr),  # any_risk
-            ))
-
-    if not rows:
-        return
-
-    # Deduplicate by PK (site, ts)
-    rows.sort(key=lambda t: (t[0], t[1]))
-    deduped: List[Tuple] = []
-    last_key = None
-    for row in rows:
-        key = (row[0], row[1])
-        if key != last_key:
-            deduped.append(row)
-            last_key = key
-
     ensure_schema()
-    upsert_risk_hourly(deduped)
+    summary["start_time"] = pd.to_datetime(summary["start_time"], errors="coerce")
+    for site, sdf in summary.groupby("site_name"):
+        sdf = sdf.dropna(subset=["start_time"]).sort_values("start_time")
+        if sdf.empty:
+            upsert_risk_now(site, 0, None, None)
+            continue
+        nxt = sdf.iloc[0]
+        start_dt = _ts_or_none(nxt["start_time"])
+        tzinfo = nxt["start_time"].tz
+        now_aware = pd.Timestamp.now(tz=tzinfo)
+        starts_in_h = max(0, int((nxt["start_time"] - now_aware).total_seconds() // 3600))
+        upsert_risk_now(site, int(nxt.get("risk_score", 0)), start_dt, starts_in_h)
 
 
 # ============================================================================
-# 5) MAIN ANALYSIS
+# 4) MAIN ANALYSIS
 # ============================================================================
 
-def analyze_risk_windows(config_path: str, save_excel: bool = True):
+def analyze_risk_windows(config_path: str, save_excel: bool = True) -> Tuple[pd.DataFrame, int]:
     """
     - Load sites from JSON (via load_site_data)
     - Fetch weather per site (via get_weather_forecast) which already slices to horizon
     - Attach hourly risk flags
     - Build contiguous risk windows per site
     - Normalize triggers + compute risk_score (0..3)
-    - Persist: windows, risk_now, and hourly (strictly from summary)
+    - Persist: windows, hourly, risk_now
     - Optional Excel export
 
-    Returns: (combined_hourly_df, summary_df, error_code)
+    Returns: (combined_hourly_df, error_code)
     """
     print("\nReading configuration...")
     sites_df, horizon_hours, default_tz, _index, error_code = load_site_data(config_path)
 
     if error_code != ConfigError.SUCCESS:
-        return pd.DataFrame(), pd.DataFrame(), error_code
+        return pd.DataFrame(), error_code
     if sites_df is None or sites_df.empty:
         print("No sites found; aborting.")
-        return pd.DataFrame(), pd.DataFrame(), ConfigError.EMPTY_SITES
+        return pd.DataFrame(), ConfigError.EMPTY_SITES
 
     all_rows = []
     for _, row in sites_df.iterrows():
@@ -361,9 +311,16 @@ def analyze_risk_windows(config_path: str, save_excel: bool = True):
 
     if not all_rows:
         print("No data produced for any site.")
-        return pd.DataFrame(), pd.DataFrame(), ConfigError.EMPTY_SITES
+        return pd.DataFrame(), ConfigError.EMPTY_SITES
 
     combined = pd.concat(all_rows, ignore_index=True)
+
+    # Ensure Time is valid before any DB writes
+    combined["Time"] = pd.to_datetime(combined["Time"], errors="coerce")
+    bad_hours = combined[combined["Time"].isna()]
+    if not bad_hours.empty:
+        print("⚠️ Dropping hourly rows with invalid Time (NaT):", len(bad_hours))
+        combined = combined.dropna(subset=["Time"]).copy()
 
     # ---- Build risk windows ----
     risk_only = combined[combined["any_risk"]].copy()
@@ -403,12 +360,14 @@ def analyze_risk_windows(config_path: str, save_excel: bool = True):
         summary["risk_score"] = summary["triggers"].apply(risk_score_simple)
         summary.drop(columns=["triggers_raw"], inplace=True)
 
-        # Drop invalid windows (safety)
-        summary = summary.dropna(subset=["start_time", "end_time"]).copy()
+        # Drop invalid windows
+        bad_windows = summary[summary[["start_time", "end_time"]].isna().any(axis=1)]
+        if not bad_windows.empty:
+            print("⚠️ Dropping windows with invalid timestamps (NaT):", len(bad_windows))
+            summary = summary.dropna(subset=["start_time", "end_time"]).copy()
 
     # ---- DB persistence ----
     ensure_schema()
-
     # Windows
     rows_w = []
     for _, r in summary.iterrows():
@@ -431,23 +390,28 @@ def analyze_risk_windows(config_path: str, save_excel: bool = True):
         insert_risk_windows(rows_w)
 
     # risk_now snapshot (earliest upcoming per site)
-    for site, sdf in summary.groupby("site_name"):
-        sdf = sdf.sort_values("start_time")
-        if sdf.empty:
-            upsert_risk_now(site, 0, None, None)
-            continue
-        nxt = sdf.iloc[0]
-        start_dt = _ts_or_none(nxt["start_time"])
-        if start_dt is None:
-            upsert_risk_now(site, 0, None, None)
-            continue
-        tzinfo = nxt["start_time"].tz
-        now_aware = pd.Timestamp.now(tz=tzinfo)
-        starts_in_h = max(0, int((nxt["start_time"] - now_aware).total_seconds() // 3600))
-        upsert_risk_now(site, int(nxt.get("risk_score", 0)), start_dt, starts_in_h)
+    upsert_risk_now_from_summary(summary)
 
-    # hourly (STRICTLY from summary)
-    upsert_risk_hourly_from_summary_strict(summary)
+    # Hourly
+    rows_h = []
+    for _, r in combined.iterrows():
+        ts = _ts_or_none(r["Time"])
+        if ts is None:
+            continue
+        rows_h.append((
+            r["site_name"],
+            ts,
+            float(r["Temperature (°F)"]) if pd.notna(r["Temperature (°F)"]) else None,
+            float(r["Wind Speed (mph)"]) if pd.notna(r["Wind Speed (mph)"]) else None,
+            int(r["Humidity (%)"]) if pd.notna(r["Humidity (%)"]) else None,
+            bool(r["temperature_risk"]),
+            bool(r["wind_risk"]),
+            bool(r["humidity_risk"]),
+            bool(r["any_risk"]),
+        ))
+    print('Number of hourly rows to upsert:', len(rows_h))
+    if rows_h:
+        upsert_risk_hourly(rows_h)
 
     # ---- Optional Excel export ----
     if save_excel and not combined.empty:
@@ -458,8 +422,8 @@ def analyze_risk_windows(config_path: str, save_excel: bool = True):
         )
         try:
             detailed = combined.copy()
-            detailed["Date"]        = pd.to_datetime(detailed["Time"], errors="coerce").dt.strftime("%Y-%m-%d")
-            detailed["Time of Day"] = pd.to_datetime(detailed["Time"], errors="coerce").dt.strftime("%I:%M %p")
+            detailed["Date"]       = pd.to_datetime(detailed["Time"], errors="coerce").dt.strftime("%Y-%m-%d")
+            detailed["Time of Day"]= pd.to_datetime(detailed["Time"], errors="coerce").dt.strftime("%I:%M %p")
 
             detailed_cols = {
                 "Date": "Date",
@@ -505,7 +469,7 @@ def analyze_risk_windows(config_path: str, save_excel: bool = True):
                     summary_excel = summary_excel[list(summary_cols.keys())].rename(columns=summary_cols)
                     summary_excel.to_excel(writer, index=False, sheet_name="Risk Summary")
 
-                # Auto-size
+                # Auto-size columns
                 for ws in writer.sheets.values():
                     for col_cells in ws.columns:
                         max_len = max(len(str(c.value)) if c.value is not None else 0 for c in col_cells)
@@ -516,15 +480,15 @@ def analyze_risk_windows(config_path: str, save_excel: bool = True):
         except Exception as e:
             print(f"\nError saving Excel file: {e}")
 
-    return combined, summary, ConfigError.SUCCESS
+    return combined, ConfigError.SUCCESS
 
 
 # ============================================================================
-# 6) Preview utility
+# 5) UTILITY: print preview
 # ============================================================================
 
 def print_risk_preview(df: pd.DataFrame):
-    """Print a quick preview of hourly risk rows."""
+    """Print a quick preview of risk rows."""
     if df.empty:
         print("\nNo weather risks detected.")
         return
@@ -545,13 +509,13 @@ def print_risk_preview(df: pd.DataFrame):
 
 
 # ============================================================================
-# 7) Main
+# 6) MAIN (run: python risk_analysis_consolidated.py [Sites.json])
 # ============================================================================
 
 if __name__ == "__main__":
     import sys
     cfg = sys.argv[1] if len(sys.argv) > 1 else os.path.join(os.getcwd(), "Sites.json")
     print(f"Using config: {cfg}")
-    combined, summary, code = analyze_risk_windows(cfg, save_excel=True)
+    df, code = analyze_risk_windows(cfg, save_excel=True)
     print("Exit code:", code)
-    print_risk_preview(combined)
+    print_risk_preview(df)

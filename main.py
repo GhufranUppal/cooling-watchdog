@@ -6,8 +6,9 @@ A proactive weather risk analysis system for monitoring temperature, humidity, a
 
 import os
 import sys
-from cooling_watchdog.risk_analysis import analyze_risk_windows, print_risk_preview
+from cooling_watchdog.risk_analysis_2 import analyze_risk_windows, print_risk_preview
 from cooling_watchdog.config import ConfigError
+
 
 def main():
     """Main entry point for the Cooling Watchdog application."""
