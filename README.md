@@ -78,6 +78,26 @@ Example report:
 [Cooling_Watchdog_Risk_Report_20250909_2153.xlsx](reports/Cooling_Watchdog_Risk_Report_20250909_2153.xlsx)
 
 
+## Database Integration
+
+The solution writes risk analysis results into a PostgreSQL database (connected to Ignition).  
+The following tables are maintained:
+
+- **risk_hourly** – Hourly weather risk values per site  
+- **risk_now** – Current risk score and next window forecast  
+- **risk_windows** – Contiguous windows of risk events
+
+### Sample Queries and Results
+
+#### risk_hourly
+![Risk Hourly](risk_hourly.png)
+
+#### risk_now
+![Risk Now](risk_now.png)
+
+#### risk_windows
+![Risk Windows](risk_windows.png)
+
 
 ## 📂 Project Structure  
 
