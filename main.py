@@ -6,7 +6,7 @@ A proactive weather risk analysis system for monitoring temperature, humidity, a
 
 import os
 import sys
-from cooling_watchdog.risk_analysis_2 import analyze_risk_windows, print_risk_preview
+from cooling_watchdog.risk_analysis import analyze_risk_windows, print_risk_preview
 from cooling_watchdog.config import ConfigError
 
 
@@ -17,7 +17,7 @@ def main():
         DEFAULT_CONFIG_PATH = os.path.join(os.getcwd(), "Sites.json")
         
         # Analyze risk windows and handle potential errors
-        result, error_code = analyze_risk_windows(config_path=DEFAULT_CONFIG_PATH, save_excel=True)
+        result, summary, error_code = analyze_risk_windows(config_path=DEFAULT_CONFIG_PATH, save_excel=True)
         
         # Check if we received an error code
         if error_code != ConfigError.SUCCESS:

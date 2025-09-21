@@ -6,47 +6,82 @@ from typing import Iterable, Sequence, Tuple, Optional
 
 import psycopg2
 import psycopg2.extras as extras
+from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
 
 # ---------------------------------------------------------------------
-# Connection helpers
+# Connection settings & helpers
 # ---------------------------------------------------------------------
 
+# PostgreSQL connection parameters
+DB_PARAMS = {
+    "dbname": "ignitiondb",     # Our application database
+    "user": "ignition_user",    # Our application user
+    "password": "1234567",      # User's password
+    "host": "localhost",
+    "port": "5432"
+}
 
-DSN_1 = (
-    "dbname=ignitiondb "
-    "user=ignition_user "
-    "password=1234567 "
-    "host=localhost "
-    "port=5432"
-)
-
-def _dsn_from_env() -> str:
-    """Build a psycopg2 DSN from env vars, preferring PG_DSN."""
-    if os.getenv("PG_DSN"):
-        return os.environ["PG_DSN"]
-
-    parts = {
-        "dbname": os.getenv("PG_DB", "ignitiondb"),
-        "user": os.getenv("PG_USER", "ignition_user"),
-        "password": os.getenv("PG_PASSWORD", ""),
-        "host": os.getenv("PG_HOST", "localhost"),
-        "port": os.getenv("PG_PORT", "5432"),
-    }
-    return " ".join(f"{k}={v}" for k, v in parts.items() if v != "")
+def verify_connection(conn) -> tuple[bool, str]:
+    """
+    Verify database connection and permissions.
+    Returns (success, message) tuple.
+    """
+    try:
+        with conn.cursor() as cur:
+            # Check connection is alive
+            cur.execute("SELECT 1")
+            if not cur.fetchone():
+                return False, "Connection test failed"
+            
+            # Check we can create tables in public schema
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS public._test_permissions (
+                    id serial PRIMARY KEY,
+                    test_col text
+                );
+            """)
+            
+            # Clean up test table
+            cur.execute("DROP TABLE IF EXISTS public._test_permissions")
+            
+            return True, "Connection and permissions verified"
+            
+    except psycopg2.Error as e:
+        return False, f"Database error: {str(e).strip()}"
+    except Exception as e:
+        return False, f"Unexpected error: {str(e)}"
 
 @contextmanager
 def get_conn(autocommit: bool = True):
-    """Context manager that yields a psycopg2 connection."""
-    conn = psycopg2.connect(DSN_1)
+    """
+    Context manager that yields a verified psycopg2 connection.
+    Raises RuntimeError if connection or permissions verification fails.
+    """
+    conn = None
     try:
-        conn.autocommit = autocommit
-        # Optional: fix search_path & timezone for session (helps in Designer too)
+        # Build DSN string
+        dsn = " ".join(f"{k}={v}" for k, v in DB_PARAMS.items())
+        
+        # Connect with error checking
+        try:
+            conn = psycopg2.connect(dsn)
+        except psycopg2.Error as e:
+            raise RuntimeError(f"Failed to connect to database: {str(e).strip()}")
+            
+        # Set autocommit and verify connection
+        conn.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT if autocommit else conn.isolation_level)
+        ok, msg = verify_connection(conn)
+        if not ok:
+            raise RuntimeError(f"Database verification failed: {msg}")
+            
+        # Connection good, set search path and yield
         with conn.cursor() as cur:
-            cur.execute("SET search_path TO public;")
-            # Current timestamp handling is TIMESTAMPTZ, no need to SET TIME ZONE
+            cur.execute("SET search_path TO public")
         yield conn
+        
     finally:
-        conn.close()
+        if conn is not None:
+            conn.close()
 
 # ---------------------------------------------------------------------
 # Schema bootstrap (safe to run multiple times)

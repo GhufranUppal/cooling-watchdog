@@ -45,6 +45,17 @@ def write_hourly_to_db(combined: pd.DataFrame):
     get_conn()
     upsert_risk_hourly(rows)
 
+
+def _ts_or_none(v):
+    """Convert pandas/np NaT/NaN/None -> None else return python datetime (tz preserved)."""
+    import pandas as _pd
+    if v is None:
+        return None
+    ts = _pd.to_datetime(v, errors="coerce")
+    if _pd.isna(ts):
+        return None
+    return ts.to_pydatetime()
+
 def write_windows_to_db(summary: pd.DataFrame):
     """
     summary columns:
@@ -54,10 +65,15 @@ def write_windows_to_db(summary: pd.DataFrame):
         return
     rows = []
     for _, r in summary.iterrows():
+        start_dt = _ts_or_none(r.get("start_time"))
+        end_dt = _ts_or_none(r.get("end_time"))
+        if start_dt is None or end_dt is None:
+            # Skip windows with invalid timestamps (NaT) to avoid DB errors
+            continue
         rows.append((
             r["site_name"],
-            pd.Timestamp(r["start_time"]).to_pydatetime(),
-            pd.Timestamp(r["end_time"]).to_pydatetime(),
+            start_dt,
+            end_dt,
             int(r["duration_h"]),
             float(r["peak_temp_f"]) if pd.notna(r["peak_temp_f"]) else None,
             float(r["peak_wind_mph"]) if pd.notna(r["peak_wind_mph"]) else None,

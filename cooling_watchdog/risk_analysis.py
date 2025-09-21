@@ -124,6 +124,7 @@ def upsert_risk_now(
 def insert_risk_windows(rows: Iterable[Tuple]):
     """
     Rows: (site, start_ts, end_ts, duration_h, peak_temp, peak_wind, min_rh_pct, triggers, risk_score)
+    Each timestamp must be timezone-aware. NaT/None timestamps will be filtered out.
     """
     rows = list(rows)
     if not rows:
@@ -133,6 +134,11 @@ def insert_risk_windows(rows: Iterable[Tuple]):
     (site, start_ts, end_ts, duration_h, peak_temp, peak_wind, min_rh_pct, triggers, risk_score)
     VALUES %s
     """
+    # Filter out rows with NaT/None timestamps
+    rows = [r for r in rows if r[1] is not None and r[2] is not None]
+    if not rows:
+        return
+
     with get_conn() as conn, conn.cursor() as cur:
         cur.execute("SET search_path TO public;")
         extras.execute_values(cur, sql, rows, page_size=500)
@@ -281,6 +287,9 @@ def upsert_risk_hourly_from_summary_strict(summary: pd.DataFrame) -> None:
         tr, wr, hr = _flags_from_triggers(trig)
         anyr = tr or wr or hr
 
+        # Find weather data for this site
+        site_data = combined[combined['site_name'] == site].copy()
+        
         # Inclusive hourly stamps
         hours = pd.date_range(start=start, end=end, freq="H")
         if len(hours) == 0:
@@ -290,12 +299,23 @@ def upsert_risk_hourly_from_summary_strict(summary: pd.DataFrame) -> None:
             ts_py = _ts_or_none(ts)
             if ts_py is None:
                 continue
+                
+            # Get weather data for this timestamp
+            ts_data = site_data[site_data['Time'] == ts]
+            if len(ts_data) > 0:
+                temp = float(ts_data['Temperature (°F)'].iloc[0])
+                wind = float(ts_data['Wind Speed (mph)'].iloc[0])
+                rh = float(ts_data['Humidity (%)'].iloc[0])
+            else:
+                # If no data found for this timestamp, skip it
+                continue
+                
             rows.append((
                 site,        # site
                 ts_py,       # ts (TIMESTAMPTZ)
-                None,        # temp
-                None,        # wind
-                None,        # rh_pct
+                temp,        # temp
+                wind,        # wind
+                rh,         # rh_pct
                 bool(tr),    # temperature_risk
                 bool(wr),    # wind_risk
                 bool(hr),    # humidity_risk
@@ -323,17 +343,18 @@ def upsert_risk_hourly_from_summary_strict(summary: pd.DataFrame) -> None:
 # 5) MAIN ANALYSIS
 # ============================================================================
 
-def analyze_risk_windows(config_path: str, save_excel: bool = True):
+def analyze_risk_windows(config_path: str, save_excel: bool = True) -> tuple[pd.DataFrame, int]:
     """
-    - Load sites from JSON (via load_site_data)
-    - Fetch weather per site (via get_weather_forecast) which already slices to horizon
-    - Attach hourly risk flags
-    - Build contiguous risk windows per site
-    - Normalize triggers + compute risk_score (0..3)
-    - Persist: windows, risk_now, and hourly (strictly from summary)
-    - Optional Excel export
+    For each site in the configuration: fetch, slice to horizon, flag risks, and optionally save Excel.
 
-    Returns: (combined_hourly_df, summary_df, error_code)
+    Args:
+        config_path (str): Path to the configuration file
+        save_excel (bool): Whether to save results to Excel
+
+    Returns:
+        tuple containing:
+            - pd.DataFrame: Combined per-hour DataFrame for all sites
+            - int: Error code (0 for success, non-zero for errors)
     """
     print("\nReading configuration...")
     sites_df, horizon_hours, default_tz, _index, error_code = load_site_data(config_path)
@@ -446,8 +467,51 @@ def analyze_risk_windows(config_path: str, save_excel: bool = True):
         starts_in_h = max(0, int((nxt["start_time"] - now_aware).total_seconds() // 3600))
         upsert_risk_now(site, int(nxt.get("risk_score", 0)), start_dt, starts_in_h)
 
-    # hourly (STRICTLY from summary)
-    upsert_risk_hourly_from_summary_strict(summary)
+    # hourly (with weather data from combined)
+    rows: List[Tuple] = []
+    for _, w in summary.iterrows():
+        site = w["site_name"]
+        start = w["start_time"]
+        end = w["end_time"]
+        trig = str(w.get("triggers", ""))
+
+        tr, wr, hr = _flags_from_triggers(trig)
+        anyr = tr or wr or hr
+
+        # Find weather data for this site
+        site_data = combined[combined['site_name'] == site].copy()
+        
+        # Inclusive hourly stamps
+        hours = pd.date_range(start=start, end=end, freq="h")  # Using 'h' instead of 'H' to avoid warning
+        if len(hours) == 0:
+            continue
+
+        for ts in hours:
+            ts_py = _ts_or_none(ts)
+            if ts_py is None:
+                continue
+                
+            # Get weather data for this timestamp
+            ts_data = site_data[site_data['Time'] == ts]
+            if len(ts_data) > 0:
+                temp = float(ts_data['Temperature (°F)'].iloc[0])
+                wind = float(ts_data['Wind Speed (mph)'].iloc[0])
+                rh = float(ts_data['Humidity (%)'].iloc[0])
+            
+                rows.append((
+                    site,        # site
+                    ts_py,       # ts (TIMESTAMPTZ)
+                    temp,        # temp
+                    wind,        # wind
+                    rh,         # rh_pct
+                    bool(tr),    # temperature_risk
+                    bool(wr),    # wind_risk
+                    bool(hr),    # humidity_risk
+                    bool(anyr),  # any_risk
+                ))
+
+    if rows:
+        upsert_risk_hourly(rows)
 
     # ---- Optional Excel export ----
     if save_excel and not combined.empty:
