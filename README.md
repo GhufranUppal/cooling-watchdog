@@ -78,28 +78,55 @@ Example report:
 [Cooling_Watchdog_Risk_Report_20250909_2153.xlsx](reports/Cooling_Watchdog_Risk_Report_20250909_2153.xlsx)
 
 
-## Database Integration
-
-The solution writes risk analysis results into a PostgreSQL database (connected to Ignition).  
-The following tables are maintained:
-
-- **risk_hourly** – Hourly weather risk values per site  
-- **risk_now** – Current risk score and next window forecast  
-- **risk_windows** – Contiguous windows of risk events
-
-### Sample Queries and Results
-
-#### risk_hourly
-![Risk Hourly](risk_hourly.png)
-
-#### risk_now
-![Risk Now](risk_now.png)
-
-#### risk_windows
-![Risk Windows](risk_windows.png)
-
 
 ## 📂 Project Structure  
 
 
 
+
+---
+
+## 📊 Ignition Vision Dashboard
+
+The **Cooling Risk Dashboard** has been implemented in Ignition Vision to visualize the data stored in the
+`risk_now`, `risk_windows`, and `risk_hourly` tables.
+
+### Dashboard Features
+
+- **Risk Now Card** → Displays the current site risk score and whether conditions are safe or at risk.
+- **Next Window Card** → Shows the upcoming risk window start time and countdown in hours.
+- **Risk Windows Table** → Tabular view of upcoming risk events with start time, end time, duration, triggers, and risk score.
+- **Risk Hourly Timeline (Easy Chart)** → Graphs the hourly risk score for the selected site. Users can hardcode time ranges (e.g., `2025-09-01` to `2025-09-02`) or configure dynamic ranges.
+
+### Example Screenshot
+
+![Cooling Risk Dashboard](VisionDashboard.png)
+
+### Notes
+
+- Dropdown allows site selection (`Virginia-East`, `Montgomery-Edge`, etc.).
+- Named Queries (`getRiskNow`, `getWindows`, `getHourlySeries`) drive all data cards and tables.
+- The Easy Chart is bound to the `risk_hourly` table for timeline visualization.
+
+---
+
+## 🌡️ Cooling Risk Dashboard in Ignition Vision
+
+We designed and implemented a **Cooling Risk Dashboard** in Ignition Vision that visualizes data stored in PostgreSQL (`risk_now`, `risk_windows`, `risk_hourly`).
+
+### Dashboard Features
+- **Site Selector** – Dropdown list dynamically populated from distinct sites across all risk tables.
+- **Risk Now Card** – Shows the current `risk_score` with severity color coding (Safe, Caution, Warning, Critical).
+- **Next Window Card** – Displays the timestamp of the next projected risk window and countdown in hours.
+- **Risk Windows Table** – Tabular view of all upcoming windows with start time, end time, duration, triggers, and risk score.
+- **Risk Hourly Timeline (Easy Chart)** – Time-series chart plotting hourly `risk_score` trends for the selected site.
+
+### Dashboard Screenshot
+![CoolingWatchdog Dashboard](CoolingWatchdog.png)
+
+### Implementation Notes
+- Named Queries in Ignition: `getRiskNow`, `getWindows`, `getHourlySeries`, `Sites`.
+- Queries filter data based on the `:site` parameter bound to the dropdown.
+- Risk Score styling is applied in Vision Tables using `configureCell` for dynamic cell coloring.
+
+---
