@@ -50,7 +50,7 @@ Reports are saved under the `reports/` folder.
 Each report includes hourly forecasts, risk flags, and summarized risk windows.  
 
 Example report:  
-[Cooling_Watchdog_Risk_Report_20250909_2153.xlsx](reports/Cooling_Watchdog_Risk_Report_20250909_2153.xlsx)
+[Cooling_Watchdog_Risk_Report_20250922_1324.xlsx](reports/Cooling_Watchdog_Risk_Report_20250922_1324.xlsx)
 
 ---
 
