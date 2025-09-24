@@ -64,8 +64,7 @@ The **Cooling Risk Dashboard** has been implemented in **Ignition Vision**.
 - **Risk Windows Table** → List of upcoming windows (start, end, triggers, score)  
 - **Risk Hourly Easy Chart** → Graph of hourly risk score  
 
-### Screenshot
-![Cooling Risk Dashboard](VisionDashboard.png)  
+### Screenshot 
 ![CoolingWatchdog Dashboard](CoolingWatchdog.png)
 
 ### Notes
